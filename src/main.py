@@ -40,10 +40,10 @@ class Worker(QObject):
         self.model_info = model_info
 
     def run_simulation_task(self):
+        """The main task to be run in the worker thread."""
         try:
             self.progress.emit(f"Running simulation for {self.model_info['name']}...")
             
-            # --- CHANGED: No longer creates its own engine ---
             # 1. Run the simulation using the provided engine
             raw_file = self.engine.run_vth_simulation(
                 model_name=self.model_info['name'],
@@ -64,7 +64,12 @@ class Worker(QObject):
 
             self.result.emit(vth_value)
         except Exception as e:
+            # --- NEW: More detailed error logging ---
+            print("\n--- An exception occurred in the worker thread ---")
+            print("--------------------------------------------------\n")
+            # Emit the simple error message to the GUI
             self.error.emit(str(e))
+            # --- END OF NEW CODE ---
         finally:
             self.finished.emit()
 
