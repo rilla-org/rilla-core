@@ -1,3 +1,10 @@
+# Rilla-specific ignores
+# Ignore the temporary simulation output directory
+temp_sim/
+
+# Ignore any generated netlist files
+*.net
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
