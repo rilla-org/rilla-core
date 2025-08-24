@@ -14,3 +14,14 @@
     }
   ]
 }
+
+{
+      "ltspice_executable": "C:/Users/kolap/AppData/Local/Programs/ADI/LTspice/LTSpice.exe",
+      "models": [
+        {
+          "name": "PSMN1R4-100CSE",
+          "path": "C:/Users/kolap/Desktop/Temp/Sandbox/SPICE_models/PSMN1R4-100CSE.lib"
+        },
+        // ... other models
+      ]
+    }
