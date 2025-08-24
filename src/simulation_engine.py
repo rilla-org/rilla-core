@@ -19,14 +19,9 @@ import shutil # NEW: Import the shutil library for file operations
 class SimulationEngine:
     """Handles the modification and execution of LTSpice simulations."""
 
-    def __init__(self, ltspice_executable_path):
-        """
-        Initializes the SimulationEngine.
-
-        Args:
-            ltspice_executable_path (str): The full path to the LTSpice executable.
-        """
-        self.runner = SimRunner(ltspice_exe=ltspice_executable_path)
+    def __init__(self):
+        """Initializes the SimulationEngine."""
+        self.runner = SimRunner()
 
     def run_vth_simulation(self, model_name, model_path):
         """
