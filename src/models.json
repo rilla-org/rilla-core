@@ -1,8 +1,9 @@
 {
+  "ltspice_executable": "C:/Users/kolap/AppData/Local/Programs/ADI/LTspice/LTSpice.exe",
   "models": [
     {
       "name": "PSMN1R4-100CSE",
-      "path": "C:/hw_dev/Discretes/MOSFET_VGS_TEST/Custom/NXP/PSMN1R4-100CSE.lib"
+      "path": "C:/Users/kolap/Desktop/Temp/Sandbox/SPICE_models/PSMN1R4-100CSE.lib"
     },
     {
       "name": "IRF540N",
