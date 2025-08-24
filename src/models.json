@@ -1,0 +1,16 @@
+{
+  "models": [
+    {
+      "name": "PSMN1R4-100CSE",
+      "path": "C:/hw_dev/Discretes/MOSFET_VGS_TEST/Custom/NXP/PSMN1R4-100CSE.lib"
+    },
+    {
+      "name": "IRF540N",
+      "path": "C:/path/to/your/libs/Standard/IRF540N.lib"
+    },
+    {
+      "name": "BSN2002 (Example)",
+      "path": "C:/path/to/your/libs/Another/BSN2002.mod"
+    }
+  ]
+}
