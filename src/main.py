@@ -15,47 +15,113 @@
 import sys
 import json
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, 
-    QVBoxLayout, QLabel, QComboBox
+    QApplication, QMainWindow, QWidget,
+    QVBoxLayout, QHBoxLayout, QGroupBox,
+    QLabel, QComboBox, QPushButton, QListWidget,
+    QSplitter
 )
+from PySide6.QtCore import Qt
 
 class RillaMainWindow(QMainWindow):
     """Main window for the Rilla application."""
     def __init__(self):
         super().__init__()
-        # ... rest of the code is exactly the same as before ...
 
         # --- Basic Window Configuration ---
-        self.setWindowTitle("Rilla - MOSFET Characterization Tool")
-        self.setGeometry(100, 100, 400, 200) # x, y, width, height
+        self.setWindowTitle("Rilla - MOSFET Characterization")
+        self.setGeometry(100, 100, 800, 600) # Start with a larger window
 
-        # --- Main Layout and Central Widget ---
+        # --- Menu Bar ---
+        self._create_menu_bar()
+
+        # --- Status Bar ---
+        self.statusBar().showMessage("Ready")
+
+        # --- Main Layout (using a QSplitter) ---
+        main_splitter = QSplitter(Qt.Horizontal)
+        
+        config_panel = self._create_config_panel()
+        results_panel = self._create_results_panel()
+
+        main_splitter.addWidget(config_panel)
+        main_splitter.addWidget(results_panel)
+        main_splitter.setStretchFactor(1, 1) # Make the results panel larger
+
+        self.setCentralWidget(main_splitter)
+
+    def _create_menu_bar(self):
+        menu_bar = self.menuBar()
+        # File Menu
+        file_menu = menu_bar.addMenu("&File")
+        add_model_action = file_menu.addAction("Add Model...")
+        file_menu.addSeparator()
+        exit_action = file_menu.addAction("Exit")
+        exit_action.triggered.connect(self.close)
+        # Help Menu
+        help_menu = menu_bar.addMenu("&Help")
+        about_action = help_menu.addAction("About Rilla")
+        return menu_bar
+
+    def _create_config_panel(self):
+        """Creates the left-hand configuration panel widget."""
+        config_widget = QWidget()
         layout = QVBoxLayout()
         
-        # --- UI Elements ---
-        self.model_label = QLabel("Select MOSFET Model:")
+        # Component Selection Group
+        comp_group = QGroupBox("1. Select Component")
+        comp_layout = QVBoxLayout()
         self.model_selector = QComboBox()
+        self.load_models() # Populate the dropdown
+        add_model_button = QPushButton("+ Add New Model")
+        comp_layout.addWidget(QLabel("MOSFET Model:"))
+        comp_layout.addWidget(self.model_selector)
+        comp_layout.addWidget(add_model_button)
+        comp_group.setLayout(comp_layout)
 
-        layout.addWidget(self.model_label)
-        layout.addWidget(self.model_selector)
+        # Test Selection Group
+        test_group = QGroupBox("2. Select Test")
+        test_layout = QVBoxLayout()
+        self.test_list = QListWidget()
+        self.test_list.addItems(["Vgs Threshold", "Rds(on) vs. Vgs", "Rds(on) vs. Temp"])
+        test_layout.addWidget(self.test_list)
+        test_group.setLayout(test_layout)
 
-        central_widget = QWidget()
-        central_widget.setLayout(layout)
-        self.setCentralWidget(central_widget)
+        # Action Button
+        run_button = QPushButton("Run Simulation")
+        # In a future step, we will connect this: run_button.clicked.connect(...)
 
-        # --- Load Data ---
-        self.load_models()
+        layout.addWidget(comp_group)
+        layout.addWidget(test_group)
+        layout.addStretch(1) # Pushes the button to the bottom
+        layout.addWidget(run_button)
+        
+        config_widget.setLayout(layout)
+        return config_widget
+
+    def _create_results_panel(self):
+        """Creates the right-hand results panel widget."""
+        results_widget = QWidget()
+        layout = QVBoxLayout()
+        layout.setAlignment(Qt.AlignCenter)
+
+        # Initial message
+        initial_message = QLabel("Select a component and test, then press 'Run Simulation' to view results.")
+        initial_message.setAlignment(Qt.AlignCenter)
+        layout.addWidget(initial_message)
+
+        # This layout will be cleared and populated with results later
+        results_widget.setLayout(layout)
+        return results_widget
 
     def load_models(self):
         """Reads the models.json file and populates the dropdown."""
         try:
-            # Assuming you run from the root rilla-core directory
             with open("src/models.json", 'r') as f:
                 data = json.load(f)
                 model_names = [model['name'] for model in data['models']]
                 self.model_selector.addItems(model_names)
         except FileNotFoundError:
-            print("Error: models.json not found!")
+            self.statusBar().showMessage("Error: models.json not found!")
             self.model_selector.addItem("Could not load models")
             self.model_selector.setEnabled(False)
 
