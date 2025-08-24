@@ -25,34 +25,29 @@ class VthExtractor:
     def extract_vth_at_25c(self, target_current=1e-3):
         """
         Finds the Vgs threshold at or near 25°C for a given target current.
-
-        Args:
-            target_current (float): The drain current at which to find Vth.
-
-        Returns:
-            float: The calculated Vgs(th) in Volts, or None if it can't be found.
+        ... (docstring is the same) ...
         """
-        # The .step command creates multiple steps. We need to find the one for 25°C.
-        # The default temperature is 27°C in SPICE, but 25°C is standard for datasheets.
-        # Our .step is from -55 to 175 in 10°C steps. The closest will be 25°C.
         temps = np.arange(-55, 176, 10)
         
         try:
-            # Find the index of the temperature step closest to 25°C
             step_idx = (np.abs(temps - 25)).argmin()
         except (ValueError, IndexError):
-            # If temp sweep is not as expected, fall back to the first step
             step_idx = 0
 
         print(f"Analyzing simulation step {step_idx} (Temp ≈ {temps[step_idx]}°C)")
 
         try:
-            # Get the voltage and current traces for that specific step
             vgs_trace = self.ltr.get_trace("V(v_g_d)")
-            id_trace = self.ltr.get_trace("Ix(XU1:D)") # Note the 'X' prefix for subcircuits
+            id_trace = self.ltr.get_trace("Ix(xu1:D)") 
             
             vgs_wave = vgs_trace.get_wave(step_idx)
             id_wave = id_trace.get_wave(step_idx)
+
+            # Convert data waves to floating point numbers
+            
+            vgs_wave = vgs_wave.astype(float)
+            id_wave = id_wave.astype(float)
+
 
             # Interpolate to find the Vgs that corresponds to the target current
             vth = np.interp(target_current, id_wave, vgs_wave)

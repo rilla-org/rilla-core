@@ -15,25 +15,21 @@
 from PyLTSpice import SimRunner, SpiceEditor
 import os
 import shutil # NEW: Import the shutil library for file operations
+from pathlib import Path
 
 class SimulationEngine:
     """Handles the modification and execution of LTSpice simulations."""
 
-    def __init__(self, ltspice_executable_path):
-        """
-        Initializes the SimulationEngine.
-
-        Args:
-            ltspice_executable_path (str): The full path to the LTSpice executable.
-        """
-        self.runner = SimRunner(ltspice_exe=ltspice_executable_path)
+    def __init__(self):
+        """Initializes the SimulationEngine."""
+        self.runner = SimRunner()
 
     def run_vth_simulation(self, model_name, model_path):
         """
-        Runs the Vgs(th) characterization simulation.
+        Runs the Vgs(th) characterization simulation using the correct workflow.
 
         Args:
-            model_name (str): The name of the MOSFET model (e.g., "PSMN1R4-100CSE").
+            model_name (str): The name of the MOSFET model.
             model_path (str): The absolute path to the .lib or .mod file.
 
         Returns:
@@ -41,34 +37,43 @@ class SimulationEngine:
         """
         print(f"Starting Vth simulation for {model_name}...")
 
-        # 1. Create a SpiceEditor instance from our template file
-        netlist = SpiceEditor("src/test_circuits/vth_test.asc")
-
-        # 2. Replace the placeholders in the netlist
-        netlist.set_element_model('XU1', model_name)
-        # Use add_instructions to add the .lib command. We use a comment in the .asc as a placeholder.
-        netlist.add_instructions(f".lib \"{model_path}\"") # Enclose path in quotes for safety
-
-        # 3. Set up a temporary directory for the simulation output
-        output_dir = os.path.join(os.getcwd(), "temp_sim")
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-        
-        # --- NEW: Handle the custom symbol dependency ---
-        # Copy our standard symbol to the simulation directory so LTspice can find it.
-        symbol_source_path = "src/symbols/generic_nmos.asy"
-        symbol_dest_path = os.path.join(output_dir, "generic_nmos.asy")
-        shutil.copy(symbol_source_path, symbol_dest_path)
-        # --- END OF NEW CODE ---
+        # 1. Define paths and set up the temporary directory
+        asc_file_path = "src/test_circuits/vth_test.asc" # The schematic to use
+        output_dir = Path(os.getcwd()) / "temp_sim"
+        output_dir.mkdir(exist_ok=True) # A cleaner way to create the directory
         
         # Configure the runner to use this output directory
         self.runner.output_folder = output_dir
 
-        raw_file, log_file = self.runner.run_now(netlist, run_filename="vth_run.net")
+        # 2. Use the runner to CONVERT the .asc to a .net file. 
+        # Because the .asy is in the same folder as the .asc, LTspice will find it.
+        netlist_path = self.runner.create_netlist(asc_file_path)
+        if not netlist_path:
+             print("Error: Failed to create .net file from .asc.")
+             return None
+
+        # 3. Use SpiceEditor to modify the newly created .net file
+        netlist = SpiceEditor(netlist_path)
         
-        if self.runner.return_code == 0:
+        # 4. Set the model and add all simulation directives
+        netlist.set_element_model('XXU1', model_name)
+        netlist.add_instructions(
+            f".lib \"{model_path}\"",
+            ".dc V1 0 5 0.05",
+            ".step temp -55 175 10",
+            ".options plotwinsize=0"
+        )
+        
+        # 5. Run the simulation using the modified netlist object
+        raw_file, log_file = self.runner.run_now(netlist)
+        
+        if raw_file: # This is the correct way to check for success
             print(f"Simulation successful. Raw file at: {raw_file}")
             return raw_file
         else:
             print(f"Error: Simulation failed with return code {self.runner.return_code}")
+            with open(log_file, 'r') as f:
+                print("--- SPICE Log ---")
+                print(f.read())
+                print("-----------------")
             return None
