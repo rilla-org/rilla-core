@@ -2,6 +2,9 @@
 # Ignore the temporary simulation output directory
 temp_sim/
 
+# Ignore user-added model files
+user_models/
+
 # Ignore any generated netlist files
 *.net
 

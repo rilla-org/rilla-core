@@ -66,21 +66,24 @@ The `SpiceEditor` class is designed to edit **netlist (`.net`) files**, not sche
 4.  **Programmatically add all simulation directives** to the netlist object using `netlist.add_instructions()`. This is where `.lib`, `.dc`, `.step`, and `.options` commands are injected.
 5.  **Run the simulation** using the modified netlist object: `runner.run_now(netlist)`.
 
-### 3.2. Component Naming Discrepancies (The "XXU1" Problem)
+### 3.2. Component & Trace Naming Discrepancies
 
-The instance name of a component can change during the `ASC -> NET -> RAW` translation process. Relying on the `InstName` from the schematic file will fail.
+The instance and trace names can change during the `ASC -> NET -> RAW` translation process. Relying on names from the schematic file will fail. The "ground truth" is always the generated files.
 
-The ground truth is always the generated netlist and the resulting `.raw` file. For our standardized `generic_nmos.asy` symbol, the naming transformation is:
+#### Instance Naming (`U1` -> `XXU1` -> `xu1`)
+For our standardized `generic_nmos.asy` symbol with `InstName=U1`, the transformation is:
+- **Schematic (`.asc`):** `U1`
+- **Netlist (`.net`):** `XXU1`
+- **Raw File (`.raw`):** `xu1` (lowercase)
 
-| Stage | File Type | Instance Name (`InstName=U1`) |
-| :--- | :--- | :--- |
-| **Schematic** | `.asc` | `U1` (from the `SYMATTR` line) |
-| **Netlist** | `.net` | `XXU1` (The simulator prefixes the name) |
-| **Raw File Trace**| `.raw` | `Ix(xu1:D)` (**lowercase**) |
+**Conclusion:** Use `XXU1` in the `SpiceEditor` and `xu1` when parsing the `.raw` file.
 
-**Conclusion:**
-- When using `netlist.set_element_model()`, we **must** use the netlist name (`XXU1`).
-- When using `raw_read.get_trace()`, we **must** use the raw file trace name (`Ix(xu1:D)`).
+#### Trace Pin Naming (`:D` vs `:DRAIN`)
+The names of the pins in a current trace (e.g., `Ix(xu1:<pin_name>)`) are determined by the pin names defined in the model's `.SUBCKT` line.
+- **Example 1:** `.SUBCKT MODEL_A D G S` will produce the trace `Ix(xu1:D)`.
+- **Example 2:** `.SUBCKT MODEL_B DRAIN GATE SOURCE` will produce the trace `Ix(xu1:DRAIN)`.
+
+**Conclusion:** The analysis module must be flexible. It cannot assume a single pin naming convention. Our `VthExtractor` implements a pattern that checks a list of common possibilities (`Ix(xu1:D)`, `Ix(xu1:DRAIN)`, etc.) to handle this variation.
 
 ### 3.3. Library Version Incompatibilities
 
@@ -103,6 +106,12 @@ id_wave = id_trace.get_wave(step_idx).astype(float)
 ### 3.5. SPICE File & Symbol Dependencies
 LTSpice has a strict dependency resolution path. For a simulation to run reliably from an .asc file:
 Any custom symbols (e.g., generic_nmos.asy) must be located in the same directory as the .asc schematic that uses them.
+
+### 3.6. Absolute vs. Relative Paths
+
+The LTSpice simulation engine, when called from a script, does not know the context of the Python script's working directory. All paths passed into the generated netlist, especially for `.lib` files, **must be absolute paths**.
+
+- **Implementation:** When a user adds a new model, the path stored in `models.json` must be converted to its full, absolute path (e.g., using `os.path.abspath()`). Passing a relative path like `user_models/model.lib` will result in a "Fatal Error: Could not open library file" from the simulator.
 
 ## 4. Future Architectural Plans
 
