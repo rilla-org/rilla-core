@@ -14,29 +14,35 @@
 
 import sys
 import json
+import traceback
+from typing import Dict
+
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
-    QVBoxLayout, QHBoxLayout, QGroupBox,
-    QLabel, QComboBox, QPushButton, QListWidget,
-    QSplitter
+    QVBoxLayout, QGroupBox, QLabel, QComboBox, 
+    QPushButton, QListWidget, QSplitter
 )
 from PySide6.QtCore import Qt, QThread, QObject, Signal
 
-from simulation_engine import SimulationEngine
-from analysis import VthExtractor
+# --- ARCHITECTURAL CHANGE: Import the abstraction, not the concrete implementation ---
+from core.interfaces import AbstractSimulationEngine
+# --- ARCHITECTURAL CHANGE: Import the concrete engine at the entry point ---
+from engines.pyltspice_engine import PyLTSpiceEngine
 
 
 class Worker(QObject):
-    """A worker that uses a pre-existing simulation engine."""
+    """
+    Worker that runs a simulation task using the provided engine.
+    It now receives and emits JSON strings, enforcing separation.
+    """
     finished = Signal()
-    error = Signal(str)
-    result = Signal(float)
+    # --- ARCHITECTURAL CHANGE: The result is now a JSON string ---
+    result = Signal(str) 
     progress = Signal(str)
 
-    # --- CHANGED: The worker now receives the engine instance ---
-    def __init__(self, simulation_engine, model_info):
+    def __init__(self, engine: AbstractSimulationEngine, model_info: Dict):
         super().__init__()
-        self.engine = simulation_engine
+        self.engine = engine
         self.model_info = model_info
 
     def run_simulation_task(self):
@@ -44,47 +50,33 @@ class Worker(QObject):
         try:
             self.progress.emit(f"Running simulation for {self.model_info['name']}...")
             
-            # 1. Run the simulation using the provided engine
-            raw_file = self.engine.run_vth_simulation(
-                model_name=self.model_info['name'],
-                model_path=self.model_info['path']
-            )
+            # The worker now only knows about the abstract interface method
+            json_result = self.engine.run_vth_simulation(model_info=self.model_info)
 
-            if raw_file is None:
-                raise RuntimeError("Simulation failed. Check console for details.")
-
-            self.progress.emit("Analyzing results...")
-            
-            # 2. Analyze the results (this part is unchanged)
-            extractor = VthExtractor(raw_file_path=raw_file)
-            vth_value = extractor.extract_vth_at_25c(target_current=1e-3)
-
-            if vth_value is None:
-                raise RuntimeError("Failed to extract Vth from simulation data.")
-
-            self.result.emit(vth_value)
-        except Exception as e:
-            # --- NEW: More detailed error logging ---
-            print("\n--- An exception occurred in the worker thread ---")
-            print("--------------------------------------------------\n")
-            # Emit the simple error message to the GUI
-            self.error.emit(str(e))
-            # --- END OF NEW CODE ---
+            self.result.emit(json_result)
+        except Exception:
+            # Create a standardized error JSON if the engine itself crashes
+            error_data = {
+                "status": "error",
+                "model_name": self.model_info.get('name', 'Unknown'),
+                "error_message": traceback.format_exc()
+            }
+            self.result.emit(json.dumps(error_data, indent=4))
         finally:
             self.finished.emit()
 
 
 class RillaMainWindow(QMainWindow):
-    """Main window for the Rilla application."""
-    def __init__(self):
+    """
+    The main UI window. It is now decoupled from any specific engine.
+    """
+    # --- ARCHITECTURAL CHANGE: The window is initialized with an engine ---
+    def __init__(self, engine: AbstractSimulationEngine):
         super().__init__()
+        self.engine = engine # Store the engine instance
         self.config_data = self.load_config()
         if not self.config_data:
             sys.exit(1)
-        
-        # --- NEW: Create a single, persistent SimulationEngine instance ---
-        self.engine = SimulationEngine()
-        # --- END OF NEW CODE ---
 
         self.setWindowTitle("Rilla - MOSFET Characterization")
         self.setGeometry(100, 100, 800, 600)
@@ -96,7 +88,6 @@ class RillaMainWindow(QMainWindow):
         main_splitter = QSplitter(Qt.Horizontal)
         config_panel = self._create_config_panel()
         
-        # Corrected initialization from the previous fix
         self.results_panel = QWidget()
         self.results_panel.setLayout(QVBoxLayout())
         self.show_initial_message()
@@ -110,16 +101,13 @@ class RillaMainWindow(QMainWindow):
         self.thread = None
         self.worker = None
 
-    # ... load_config, _create_menu_bar, _create_config_panel methods are unchanged ...
+    # ... (load_config, _create_menu_bar, _create_config_panel are mostly unchanged) ...
     def load_config(self):
         try:
             with open("src/models.json", 'r') as f:
                 return json.load(f)
-        except FileNotFoundError:
-            print("CRITICAL ERROR: models.json not found!")
-            return None
-        except json.JSONDecodeError:
-            print("CRITICAL ERROR: models.json is not a valid JSON file!")
+        except Exception as e:
+            print(f"CRITICAL ERROR loading models.json: {e}")
             return None
 
     def _create_menu_bar(self):
@@ -175,9 +163,9 @@ class RillaMainWindow(QMainWindow):
         self.clear_results_panel()
         
         self.thread = QThread()
-        # --- CHANGED: Pass the persistent engine to the worker ---
+        # The worker now receives the abstract engine instance
         self.worker = Worker(
-            simulation_engine=self.engine,
+            engine=self.engine,
             model_info=selected_model_info
         )
         self.worker.moveToThread(self.thread)
@@ -186,47 +174,72 @@ class RillaMainWindow(QMainWindow):
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.thread.deleteLater)
-        self.worker.result.connect(self.display_vth_result)
-        self.worker.error.connect(self.display_error)
+        # --- ARCHITECTURAL CHANGE: Connect to the new result handler ---
+        self.worker.result.connect(self.handle_json_result)
         self.worker.progress.connect(self.update_status)
         self.thread.finished.connect(lambda: self.run_button.setEnabled(True))
         
         self.thread.start()
 
-    # ... all other methods (update_status, display_error, etc.) are unchanged ...
     def update_status(self, message):
         self.status_bar.showMessage(message)
 
+    def handle_json_result(self, json_string: str):
+        """
+        Parses the JSON result from the worker and routes it to the correct display method.
+        """
+        try:
+            data = json.loads(json_string)
+            if data.get("status") == "success":
+                self.status_bar.showMessage("Simulation complete.")
+                # We could have a router here for different test_types in the future
+                self.display_vth_result(data)
+            else:
+                error_msg = data.get("error_message", "Unknown error")
+                self.display_error(error_msg)
+        except json.JSONDecodeError:
+            self.display_error("Received invalid JSON from the simulation engine.")
+
     def display_error(self, error_message):
-        self.status_bar.showMessage(f"Error: {error_message}")
+        self.status_bar.showMessage(f"Error: Simulation failed.")
+        self.clear_results_panel()
         error_label = QLabel(f"Simulation Failed\n\nError: {error_message}")
         error_label.setAlignment(Qt.AlignCenter)
         error_label.setStyleSheet("color: red;")
         self.results_panel.layout().addWidget(error_label)
         
-    def display_vth_result(self, vth_value):
-        self.status_bar.showMessage("Simulation complete.")
+    def display_vth_result(self, data: Dict):
+        """Displays the final Vth result from the parsed JSON data."""
+        self.clear_results_panel()
+        
         result_widget = QWidget()
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignCenter)
+
+        vth_value = data.get("results", {}).get("vth_at_25c_volts", float('nan'))
+
         title = QLabel("Vgs Threshold Result")
         title.setStyleSheet("font-size: 16px; font-weight: bold;")
-        model_label = QLabel(f"Component: {self.model_selector.currentText()}")
+        model_label = QLabel(f"Component: {data.get('model_name', 'N/A')}")
         result_label = QLabel(f"Vgs(th) @ 1mA, 25°C:")
         result_value = QLabel(f"{vth_value:.4f} V")
         result_value.setStyleSheet("font-size: 24px; font-weight: bold; color: #007BFF;")
+
         layout.addWidget(title)
         layout.addWidget(model_label)
         layout.addSpacing(20)
         layout.addWidget(result_label)
         layout.addWidget(result_value)
         layout.addStretch()
+        
         result_widget.setLayout(layout)
         self.results_panel.layout().addWidget(result_widget)
 
     def clear_results_panel(self):
         for i in reversed(range(self.results_panel.layout().count())): 
-            self.results_panel.layout().itemAt(i).widget().setParent(None)
+            widget = self.results_panel.layout().itemAt(i).widget()
+            if widget is not None:
+                widget.setParent(None)
 
     def show_initial_message(self):
         self.clear_results_panel()
@@ -235,8 +248,9 @@ class RillaMainWindow(QMainWindow):
         self.results_panel.layout().addWidget(initial_message)
 
 
+# --- ARCHITECTURAL CHANGE: This file is now a module, not the main entry point ---
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = RillaMainWindow()
-    window.show()
-    sys.exit(app.exec())
+    # This block is now only for testing this file in isolation.
+    # The main application entry point is run_rilla.py in the root directory.
+    print("This file is not meant to be run directly.")
+    print("Please run 'python run_rilla.py' from the project root.")
