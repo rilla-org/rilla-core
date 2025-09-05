@@ -15,28 +15,24 @@
 import sys
 import json
 import traceback
+import os
+import shutil
 from typing import Dict
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QVBoxLayout, QGroupBox, QLabel, QComboBox, 
-    QPushButton, QListWidget, QSplitter
+    QPushButton, QListWidget, QSplitter, QFileDialog
 )
 from PySide6.QtCore import Qt, QThread, QObject, Signal
 
-# --- ARCHITECTURAL CHANGE: Import the abstraction, not the concrete implementation ---
 from core.interfaces import AbstractSimulationEngine
-# --- ARCHITECTURAL CHANGE: Import the concrete engine at the entry point ---
 from engines.pyltspice_engine import PyLTSpiceEngine
 
 
 class Worker(QObject):
-    """
-    Worker that runs a simulation task using the provided engine.
-    It now receives and emits JSON strings, enforcing separation.
-    """
     finished = Signal()
-    # --- ARCHITECTURAL CHANGE: The result is now a JSON string ---
     result = Signal(str) 
     progress = Signal(str)
 
@@ -46,16 +42,11 @@ class Worker(QObject):
         self.model_info = model_info
 
     def run_simulation_task(self):
-        """The main task to be run in the worker thread."""
         try:
             self.progress.emit(f"Running simulation for {self.model_info['name']}...")
-            
-            # The worker now only knows about the abstract interface method
             json_result = self.engine.run_vth_simulation(model_info=self.model_info)
-
             self.result.emit(json_result)
         except Exception:
-            # Create a standardized error JSON if the engine itself crashes
             error_data = {
                 "status": "error",
                 "model_name": self.model_info.get('name', 'Unknown'),
@@ -67,13 +58,14 @@ class Worker(QObject):
 
 
 class RillaMainWindow(QMainWindow):
-    """
-    The main UI window. It is now decoupled from any specific engine.
-    """
-    # --- ARCHITECTURAL CHANGE: The window is initialized with an engine ---
     def __init__(self, engine: AbstractSimulationEngine):
         super().__init__()
-        self.engine = engine # Store the engine instance
+        self.engine = engine
+        # Define paths for user models and config
+        self.user_models_dir = Path("user_models")
+        self.config_path = Path("src/models.json")
+        self.user_models_dir.mkdir(exist_ok=True) # Ensure the directory exists
+
         self.config_data = self.load_config()
         if not self.config_data:
             sys.exit(1)
@@ -101,19 +93,22 @@ class RillaMainWindow(QMainWindow):
         self.thread = None
         self.worker = None
 
-    # ... (load_config, _create_menu_bar, _create_config_panel are mostly unchanged) ...
     def load_config(self):
         try:
-            with open("src/models.json", 'r') as f:
+            with open(self.config_path, 'r') as f:
                 return json.load(f)
         except Exception as e:
-            print(f"CRITICAL ERROR loading models.json: {e}")
+            print(f"CRITICAL ERROR loading {self.config_path}: {e}")
             return None
 
     def _create_menu_bar(self):
         menu_bar = self.menuBar()
         file_menu = menu_bar.addMenu("&File")
+        
+        # --- NEW: Connect the "Add Model" menu action ---
         add_model_action = file_menu.addAction("Add Model...")
+        add_model_action.triggered.connect(self.on_add_model_clicked)
+        
         file_menu.addSeparator()
         exit_action = file_menu.addAction("Exit")
         exit_action.triggered.connect(self.close)
@@ -127,13 +122,20 @@ class RillaMainWindow(QMainWindow):
         comp_group = QGroupBox("1. Select Component")
         comp_layout = QVBoxLayout()
         self.model_selector = QComboBox()
-        model_names = [model['name'] for model in self.config_data.get('models', [])]
-        self.model_selector.addItems(model_names)
+        
+        # --- REFACTORED: Use a dedicated refresh method ---
+        self._refresh_model_dropdown()
+        
+        # The Add button in the UI is for future use, we are using the File menu for now
         add_model_button = QPushButton("+ Add New Model")
+        add_model_button.setEnabled(False) # Disable for now to avoid confusion
+        
         comp_layout.addWidget(QLabel("MOSFET Model:"))
         comp_layout.addWidget(self.model_selector)
         comp_layout.addWidget(add_model_button)
         comp_group.setLayout(comp_layout)
+        
+        # ... (rest of the panel is unchanged) ...
         test_group = QGroupBox("2. Select Test")
         test_layout = QVBoxLayout()
         self.test_list = QListWidget()
@@ -149,6 +151,89 @@ class RillaMainWindow(QMainWindow):
         layout.addWidget(self.run_button)
         config_widget.setLayout(layout)
         return config_widget
+
+    # --- NEW: Method to handle adding a model file ---
+    def _get_subckt_name_from_file(self, file_path: Path) -> str | None:
+        """Reads a .lib or .mod file and extracts the first .SUBCKT name."""
+        try:
+            with open(file_path, 'r') as f:
+                for line in f:
+                    # Look for lines that start with .SUBCKT, case-insensitive
+                    if line.strip().lower().startswith('.subckt'):
+                        # The name is the second part of the line
+                        parts = line.strip().split()
+                        if len(parts) > 1:
+                            return parts[1] # Return the subcircuit name
+            return None # No .SUBCKT found
+        except Exception as e:
+            print(f"Could not read or parse {file_path}: {e}")
+            return None
+        
+    def on_add_model_clicked(self):
+        """Opens a file dialog, copies the file, and intelligently extracts the model name."""
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select SPICE Model Files",
+            "",
+            "SPICE Models (*.lib *.mod);;All Files (*)"
+        )
+
+        if not file_paths:
+            # User canceled the dialog
+            return
+
+        added_models = 0
+        for file_path_str in file_paths:
+            file_path = Path(file_path_str)
+            dest_path = self.user_models_dir / file_path.name
+            
+            # 1. Copy the file to our user_models directory
+            try:
+                shutil.copy(file_path, dest_path)
+                print(f"Copied model file to {dest_path}")
+            except Exception as e:
+                print(f"Error copying file {file_path.name}: {e}")
+                # In a real app, show a message box to the user
+                continue # Skip to the next file
+            
+            model_name = self._get_subckt_name_from_file(dest_path)
+            
+            # If we can't find a .SUBCKT name, fall back to the filename as a guess
+            if not model_name:
+                print(f"Warning: Could not find .SUBCKT in {dest_path}. Using filename as model name.")
+                model_name = file_path.stem
+
+            # 2. Add the new model to our models.json config
+            absolute_path = os.path.abspath(dest_path)
+        
+            new_model_entry = {
+            "name": model_name,
+            "path": absolute_path # Use the absolute path here
+            }
+            
+            # Avoid adding duplicates
+            if not any(m['name'] == model_name for m in self.config_data['models']):
+                self.config_data['models'].append(new_model_entry)
+                added_models += 1
+
+        if added_models > 0:
+            # 3. Save the updated config back to the file
+            try:
+                with open(self.config_path, 'w') as f:
+                    json.dump(self.config_data, f, indent=4)
+                
+                # 4. Refresh the UI to show the new model
+                self._refresh_model_dropdown()
+                self.status_bar.showMessage(f"Successfully added {added_models} new model(s).")
+            except Exception as e:
+                print(f"Error saving updated config to {self.config_path}: {e}")
+
+    # --- NEW: Centralized method for populating the dropdown ---
+    def _refresh_model_dropdown(self):
+        """Clears and repopulates the model selector dropdown from config data."""
+        self.model_selector.clear()
+        model_names = [model['name'] for model in self.config_data.get('models', [])]
+        self.model_selector.addItems(model_names)
 
     def on_run_simulation_clicked(self):
         selected_model_name = self.model_selector.currentText()

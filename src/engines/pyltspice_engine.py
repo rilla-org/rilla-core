@@ -47,6 +47,9 @@ class PyLTSpiceEngine(AbstractSimulationEngine):
         
         self.runner.output_folder = output_dir
 
+        netlist_path = None
+        log_file = None
+
         try:
             netlist_path = self.runner.create_netlist(asc_file_path)
             if not netlist_path:
@@ -66,11 +69,7 @@ class PyLTSpiceEngine(AbstractSimulationEngine):
             
             if not raw_file:
                 # In case of failure, read the log for a more detailed error
-                log_content = ""
-                if log_file and os.path.exists(log_file):
-                    with open(log_file, 'r') as f:
-                        log_content = f.read()
-                raise RuntimeError(f"Simulation failed. Log: {log_content}")
+                raise RuntimeError("Simulation failed to produce a .raw file.")
 
             # If simulation is successful, run the analysis
             extractor = VthExtractor(raw_file_path=raw_file)
@@ -87,7 +86,10 @@ class PyLTSpiceEngine(AbstractSimulationEngine):
             return json.dumps(output_data, indent=4)
 
         except Exception as e:
-            # If anything fails, return a standardized error JSON
+            # If anything fails during the process, catch the exception
+            # and return a standardized error JSON. The full traceback
+            # will still be printed to the console by the main worker thread.
+            print(f"An error occurred in the simulation engine: {e}") # A simple log
             error_data = {
                 "status": "error",
                 "model_name": model_info['name'],
