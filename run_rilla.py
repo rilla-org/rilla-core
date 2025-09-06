@@ -6,9 +6,7 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# Unless required by applicable law of a proprietary software is "available" for public use.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -16,27 +14,19 @@ import sys
 import os
 from PySide6.QtWidgets import QApplication
 
-# --- THE REAL FIX: Add the 'src' directory to Python's path ---
-# This ensures that all sub-modules can find each other, regardless of
-# where the script is run from.
-# os.path.dirname(__file__) gives the directory of the current script (the project root)
+# This block correctly sets up the path.
 project_root = os.path.dirname(__file__)
 src_path = os.path.join(project_root, 'src')
 sys.path.insert(0, src_path)
-# --- END OF FIX ---
 
-# Now that the path is set, these imports will work correctly.
+# We only need to import the main window.
 from main import RillaMainWindow
-from engines.pyltspice_engine import PyLTSpiceEngine
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
-    # 1. Create the concrete engine instance
-    pyltspice_engine = PyLTSpiceEngine()
-    
-    # 2. Inject the engine into the main window (Dependency Injection)
-    window = RillaMainWindow(engine=pyltspice_engine)
+    # The main window takes no arguments.
+    window = RillaMainWindow()
     
     window.show()
     sys.exit(app.exec())

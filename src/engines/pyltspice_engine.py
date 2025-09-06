@@ -17,46 +17,38 @@ import shutil
 import json
 from pathlib import Path
 from typing import Dict
-
+from PySide6 import QtCore
 from PyLTSpice import SimRunner, SpiceEditor
 
-# Import the interface we are implementing
+# Correct, absolute imports from the 'src' root
 from core.interfaces import AbstractSimulationEngine
-# Import the analysis module, which now lives alongside the engine
-from .analysis import VthExtractor
+from engines.analysis import VthExtractor
 
 class PyLTSpiceEngine(AbstractSimulationEngine):
-    """
-    A concrete implementation of the simulation engine using PyLTSpice.
-    """
-
-    def __init__(self):
-        """Initializes the PyLTSpice engine."""
-        # This runner can be reused for all simulations handled by this engine instance.
-        self.runner = SimRunner()
-
     def run_vth_simulation(self, model_info: Dict) -> str:
-        """
-        Runs the Vgs(th) simulation and returns the results as a JSON string.
-        """
+        runner = SimRunner()
         print(f"Starting Vth simulation for {model_info['name']}...")
 
-        asc_file_path = "src/test_circuits/vth_test.asc"
-        output_dir = Path(os.getcwd()) / "temp_sim"
-        output_dir.mkdir(exist_ok=True)
+        # --- SANDBOX ISOLATION FIX ---
+        source_asc_path = Path("src/test_circuits/vth_test.asc").resolve()
+        source_asy_path = Path("src/test_circuits/generic_nmos.asy").resolve()
+
+        run_timestamp = QtCore.QDateTime.currentDateTime().toString("yyyyMMdd_hhmmss_zzz")
+        sandbox_dir = Path(os.getcwd()) / f"temp_sim_{model_info['name']}_{run_timestamp}"
+        sandbox_dir.mkdir(exist_ok=True)
         
-        self.runner.output_folder = output_dir
-
-        netlist_path = None
-        log_file = None
-
+        isolated_asc_path = sandbox_dir / source_asc_path.name
+        shutil.copy(source_asc_path, isolated_asc_path)
+        shutil.copy(source_asy_path, sandbox_dir)
+        # --- END OF FIX ---
+        
+        runner.output_folder = sandbox_dir
         try:
-            netlist_path = self.runner.create_netlist(asc_file_path)
+            netlist_path = runner.create_netlist(isolated_asc_path)
             if not netlist_path:
-                raise RuntimeError("Failed to create .net file from .asc.")
+                raise RuntimeError("Failed to create .net file from isolated .asc.")
 
             netlist = SpiceEditor(netlist_path)
-            
             netlist.set_element_model('XXU1', model_info['name'])
             netlist.add_instructions(
                 f".lib \"{model_info['path']}\"",
@@ -65,34 +57,25 @@ class PyLTSpiceEngine(AbstractSimulationEngine):
                 ".options plotwinsize=0"
             )
             
-            raw_file, log_file = self.runner.run_now(netlist)
+            raw_file, log_file = runner.run_now(netlist)
             
             if not raw_file:
-                # In case of failure, read the log for a more detailed error
-                raise RuntimeError("Simulation failed to produce a .raw file.")
+                log_content = ""
+                if log_file and os.path.exists(log_file):
+                    with open(log_file, 'r') as f:
+                        log_content = f.read()
+                raise RuntimeError(f"Simulation failed. Log: {log_content}")
 
-            # If simulation is successful, run the analysis
             extractor = VthExtractor(raw_file_path=raw_file)
             result_dict = extractor.extract_vth_at_25c(target_current=1e-3)
-
-            # Create the final JSON output
-            output_data = {
-                "status": "success",
-                "test_type": "vth_analysis",
-                "model_name": model_info['name'],
-                "results": result_dict['results'],
-                "raw_data_vth_curve": result_dict['raw_data']
-            }
+            
+            output_data = { "status": "success", "test_type": "vth_analysis", "model_name": model_info['name'], "results": result_dict['results'], "raw_data_vth_curve": result_dict['raw_data'] }
             return json.dumps(output_data, indent=4)
-
         except Exception as e:
-            # If anything fails during the process, catch the exception
-            # and return a standardized error JSON. The full traceback
-            # will still be printed to the console by the main worker thread.
-            print(f"An error occurred in the simulation engine: {e}") # A simple log
-            error_data = {
-                "status": "error",
-                "model_name": model_info['name'],
-                "error_message": str(e)
-            }
+            error_data = { "status": "error", "model_name": model_info['name'], "error_message": str(e) }
             return json.dumps(error_data, indent=4)
+        finally:
+            try:
+                shutil.rmtree(sandbox_dir)
+            except OSError as e:
+                print(f"Error removing temporary directory {sandbox_dir}: {e}")
