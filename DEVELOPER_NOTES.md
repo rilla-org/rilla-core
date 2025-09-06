@@ -113,12 +113,46 @@ The LTSpice simulation engine, when called from a script, does not know the cont
 
 - **Implementation:** When a user adds a new model, the path stored in `models.json` must be converted to its full, absolute path (e.g., using `os.path.abspath()`). Passing a relative path like `user_models/model.lib` will result in a "Fatal Error: Could not open library file" from the simulator.
 
-## 4. Future Architectural Plans
+### 3.7. Concurrency and Race Conditions (The "Sandbox" Pattern)
 
-### 4.1. Logging Strategy
+Running multiple `PyLTSpice` simulations concurrently will fail due to a race condition. Multiple LTspice processes cannot reliably operate on the same source files (`.asc`, `.asy`) or in the same output directory simultaneously.
+
+- **The Failure Symptom:** This typically manifests as an LTspice dialog box with the error `Trouble reading file "..."`, as one process locks a file that another process needs.
+
+- **The Solution (Complete Sandbox Isolation):** Each simulation **must** be run in its own, unique, temporary "sandbox" directory. The `PyLTSpiceEngine` implements this pattern:
+    1.  For each simulation, a unique temporary directory is created (e.g., `temp_sim_<model_name>_<timestamp>`).
+    2.  All required source files (the `.asc` schematic, the `.asy` symbol) are **copied** into this sandbox.
+    3.  The entire simulation (`create_netlist`, `run_now`) is performed using only the files within this isolated sandbox.
+    4.  The sandbox directory is deleted in a `finally` block to ensure cleanup.
+
+This pattern completely isolates each simulation process, eliminating all file-based race conditions.
+
+## 4. Threading in a Python/Qt Application
+
+### 4.1. The Root Problem: Python Garbage Collection vs. Qt's Event Loop
+
+A critical stability issue was discovered when launching multiple "fire-and-forget" worker threads. The root cause is a race condition between Python's memory management and Qt's threading system.
+
+- **The Failure Pattern:** `QThread` and `Worker` objects created as local variables inside a function (e.g., a button click handler) go out of scope as soon as the function returns. Python's garbage collector is then free to destroy these objects. This can happen *while the Qt thread is still running*, leading to silent application crashes or `QThread: Destroyed while thread is still running` errors on shutdown.
+
+- **Key Insight:** Standard Qt patterns that rely solely on `deleteLater()` or parent-child relationships can be insufficient, as Python can destroy the underlying object before Qt's event loop has a chance to process the cleanup signals.
+
+### 4.2. The Solution: The Persistent Object Pool Pattern
+
+To guarantee stability, we **must** maintain a strong, explicit Python reference to all active `QThread` and `Worker` objects for the entire duration of their tasks.
+
+- **Implementation:** The `RillaMainWindow` maintains two instance-level lists: `self.active_threads` and `self.active_workers`.
+- **Lifecycle:**
+    1.  When a simulation run begins, these lists are cleared.
+    2.  As each `QThread` and `Worker` is created, it is appended to these lists. This prevents them from being garbage collected.
+    3.  When all simulations are confirmed to be complete (by tracking a countdown), the lists are cleared, releasing the references and allowing Qt's `deleteLater` mechanism to clean up the objects safely.
+
+## 5. Future Architectural Plans
+
+### 5.1. Logging Strategy
 The current use of print() for debugging is temporary. The next major refactor will replace all print statements with Python's standard logging module.
 Benefits: This will allow for configurable log levels (DEBUG, INFO, WARNING, ERROR), logging to a file (rilla.log), and providing users with a way to enable verbose logging for easier remote debugging.
 
-### 4.2. Built-in Debugging Tools
+### 5.2. Built-in Debugging Tools
 To make future development easier, we plan to add a "Debug" menu to the application.
 Export Last Netlist: A planned feature is a menu option that will save a copy of the exact .net file that was generated and sent to the simulator. This would have solved the "XXU1" naming issue instantly and will be invaluable for debugging future test benches.
