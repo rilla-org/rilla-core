@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Rilla Design Journal",
+  "description": "A structured log of engineering decisions and simulation results.",
+  "type": "object",
+  "properties": {
+    "journal_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "created_timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "project_name": {
+      "type": "string"
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "entry_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "author": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "simulation_results": {
+            "type": "object"
+          }
+        },
+        "required": ["entry_id", "timestamp", "author", "title", "rationale"]
+      }
+    }
+  },
+  "required": ["journal_id", "created_timestamp", "project_name", "entries"]
+}

@@ -1,0 +1,9 @@
+{
+  "project_name": "Example Rilla Project",
+  "version": "1.0",
+  "description": "A sample project to demonstrate Rilla's capabilities.",
+  "templates": [
+    "rilla_core/templates/vgs_threshold/template.json"
+  ],
+  "journals": []
+}

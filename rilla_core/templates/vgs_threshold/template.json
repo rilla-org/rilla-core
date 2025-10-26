@@ -1,0 +1,27 @@
+{
+  "template_name": "Vgs(th) Characterization",
+  "version": "1.0",
+  "description": "Measures the gate-source threshold voltage (Vgs(th)) of a MOSFET at a specified drain current.",
+  "simulation": {
+    "engine": "ltspice",
+    "testbench": "vth_test.asc",
+    "parameters": {
+      "V_GATE_MAX": 5,
+      "V_GATE_STEP": 0.05,
+      "TEMP_MIN": -55,
+      "TEMP_MAX": 175,
+      "TEMP_STEP": 10
+    },
+    "commands": [
+      ".dc V1 0 {V_GATE_MAX} {V_GATE_STEP}",
+      ".step temp {TEMP_MIN} {TEMP_MAX} {TEMP_STEP}",
+      ".options plotwinsize=0"
+    ]
+  },
+  "analysis": {
+    "module": "analysis_vgs_threshold.py",
+    "parameters": {
+      "target_current": 1e-3
+    }
+  }
+}
